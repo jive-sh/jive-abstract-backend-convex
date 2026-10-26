@@ -20,10 +20,17 @@ The abstract itself is an ordinary library: it builds and publishes through
   deployment whose [reference](https://docs.convex.dev/production/multiple-deployments) is the environment name
   in lowercase. `Preview` gets a [preview deployment](https://docs.convex.dev/production/multiple-deployments#preview)
   per pull request (`pr-<number>`), which Convex deletes after its retention period.
-- **Team access token**: the one Convex credential, a Convex
-  [team token](https://docs.convex.dev/management-api) stored as the repository secret `CONVEX_TEAM_ACCESS_TOKEN`.
-  Each deploy uses it to mint a [deploy key](https://docs.convex.dev/cli/deploy-key-types) for that one
-  deployment, which is deleted when the push finishes and expires on its own after 35 minutes regardless.
+- **Credential**: what every hook authenticates to Convex with. A package lists exactly one of two in
+  `jive.cicd.requiredSecrets`, and that one is used:
+  - **Team access token** (`CONVEX_TEAM_ACCESS_TOKEN`): a Convex [team token](https://docs.convex.dev/management-api#authorization),
+    the only credential the Management API takes. The hooks create the project and deployments, add custom domains,
+    and for each push mint a [deploy key](https://docs.convex.dev/cli/deploy-key-types) for that one deployment,
+    deleted when the push finishes and expiring on its own after 35 minutes regardless.
+  - **Production deploy key** (`CONVEX_DEPLOY_KEY`): a key of the form `prod:<deployment-name>|…` that "grants
+    permissions to deploy code to" one deployment ([production deploy keys](https://docs.convex.dev/cli/deploy-key-types#production-deploy-keys)),
+    made in the Convex dashboard under that deployment's settings. It reaches that deployment's own API too
+    ([authorization](https://docs.convex.dev/deployment-platform-api#authorization)), but not the Management API,
+    so the deployment must already exist and the package can have neither previews nor custom domains (see below).
 
 ## Extending it
 
@@ -50,7 +57,7 @@ The abstract itself is an ordinary library: it builds and publishes through
       "deploy": { "verb": "Deploy to", "branches": { "main": ["latest"] }, "previews": false, "sequentially": true },
       "runsOnPullRequests": true,
       "runsOn": "ubuntu-latest",
-      "requiredSecrets": ["CONVEX_TEAM_ACCESS_TOKEN"]
+      "requiredSecrets": ["CONVEX_TEAM_ACCESS_TOKEN"]  // or ["CONVEX_DEPLOY_KEY"], never both
     },
     "backend-convex": {
       "team": 551884,
@@ -92,7 +99,7 @@ validate the manifest as you type. Every field is required, so the schema lists 
 | Field | Meaning |
 | --- | --- |
 | `team` | Numeric id of the Convex team. The Management API takes ids, not slugs. |
-| `project` | Slug of the project; created with that name on the first deploy. |
+| `project` | Slug of the project; created with that name on the first deploy (with a team access token; with a deploy key it must exist). |
 | `region` | Region for deployments the abstract creates. An existing deployment never moves. |
 | `environments` | One entry per environment, no more and no fewer; checked when the manifest is read. |
 | `environments.*.environmentVariables` | `{ "value": "…" }` is written on every deploy. `{ "generateOnce": … }` is generated only when the deployment provably lacks it (below). Variables not declared here are left alone and listed by name in the log. |
@@ -117,6 +124,24 @@ validate the manifest as you type. Every field is required, so the schema lists 
 | `deploy-plan` | Ensures the project and the environment's deployment exist, then plans a deploy (`{"deploy":true,"url":…}`) to the first `convexSite` custom domain, else the deployment's `.convex.site` URL. |
 | `upload-artifacts` | Nothing. |
 | `deploy` | In order: checks whether this environment's client version is already on the registry; ensures the project and deployment; applies environment variables; mints a deploy key and runs `convex deploy`, then `afterDeploy`; deletes the key; adds missing custom domains and sets canonical URLs; publishes the client, unless its version was already on the registry. |
+
+### Deploying with a production deploy key
+
+With `CONVEX_DEPLOY_KEY` in `requiredSecrets`, each step uses the key, or cannot run:
+
+| Step | With a deploy key | Source |
+| --- | --- | --- |
+| Find the deployment | Asked of Convex with the key alone, as the `convex` CLI does (`deployment/url_for_key`, `deployment/team_and_project_for_key`; undocumented, read from convex 1.48.0's `deploymentSelection.ts`). The deploy stops unless its team id, project slug and reference are the manifest's team, project and the environment's name in lowercase. | CLI source |
+| Create the project or a deployment | Cannot: Management API. The deployment must exist, with that reference. | [Management API authorization](https://docs.convex.dev/management-api#authorization) |
+| Preview deployments | Cannot: one is created per pull request. `previews` must be false. | same |
+| Environment variables, canonical URLs | Through the deployment's own API with `Convex <key>`. | [Deployment API authorization](https://docs.convex.dev/deployment-platform-api#authorization) |
+| Push and `afterDeploy` | `convex deploy` and `convex run` with the key itself; no key is minted or deleted. | [Production deploy keys](https://docs.convex.dev/cli/deploy-key-types#production-deploy-keys) |
+| Custom domains | Cannot list or add them: Management API. `customDomains` must be empty; canonical URLs are left as they are. | [Management API authorization](https://docs.convex.dev/management-api#authorization) |
+
+A key that is not a production key (`dev:`, `preview:`) is refused. If the variable the manifest does not list is
+set as well, every hook refuses rather than guess which credential acts; Jive's pipeline only exports the secrets
+`requiredSecrets` lists, so this guards local runs and misconfigured environments. A Management API call made under
+a deploy key fails naming its step, never silently.
 
 Environment variables are applied before the push, so the pushed code, including an `auth.config.ts` that
 reads deployment variables (as in Convex's [Clerk guide](https://docs.convex.dev/auth/clerk#configuring-the-backend)),
@@ -172,8 +197,12 @@ client API URL), `convexSiteUrl`, and `deployment` (`environment`, `sourceCommit
   Nothing yet stops a change that breaks those callers.
 - **Self-hosted Convex** (`CONVEX_SELF_HOSTED_URL`) is not an environment kind yet. The deployment and
   credential handling are behind one module each, so a self-hosted target can be added as another kind.
-- **The team access token is long-lived** and is exposed to every pull-request build, because Jive's
-  `requiredSecrets` is enforced in the build job.
+- **Either credential is long-lived** and is exposed to every pull-request build, because Jive's
+  `requiredSecrets` is enforced in the build job. A deploy key's reach is one deployment; a team token's, the team.
+- **A deploy key's deployment is found through Convex's CLI endpoints**, which Convex does not document; a change
+  there breaks deploy-key runs, with the reply quoted in the error.
+- Whether a dashboard-made production deploy key may set environment variables and canonical URLs is unverified;
+  reading both with a dev deploy key was checked on 2026-10-26.
 - The generated `api.d.ts` also declares internal function names (types only; clients cannot call them).
 
 ## Developing this abstract
@@ -181,4 +210,5 @@ client API URL), `convexSiteUrl`, and `deployment` (`environment`, `sourceCommit
 `bun run jive:cicd:build` builds and installs the CLI locally; `bun run jive:cicd:audit` typechecks and runs
 the tests, including `test/e2e.test.ts`, which runs every hook of the built CLI against `test/fixture` on a
 throwaway Convex project (deleted afterwards) and publishes the fixture's client to a registry the test serves
-itself. It needs `CONVEX_TEAM_ACCESS_TOKEN` for the fixture's team.
+itself. It needs `CONVEX_TEAM_ACCESS_TOKEN` for the fixture's team. The deploy-key path is covered by unit tests against
+fakes (`src/internal/modules/backend/impl.test.ts`, `convex-credential/impl.test.ts`), not run live.

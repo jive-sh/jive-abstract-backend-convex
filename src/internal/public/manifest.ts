@@ -10,8 +10,21 @@ import { PREVIEW_ENVIRONMENT, isEnvironment, makeJivePackageJsonSchema } from "j
 /** The block's key under `jive`, which is also this abstract's kind. */
 export const BACKEND_CONVEX_KEY = "backend-convex";
 
-/** Repository secret holding a Convex team access token; it must be listed in `jive.cicd.requiredSecrets`. */
+/**
+ * The two credentials a package can deploy with; `jive.cicd.requiredSecrets` lists exactly one, and that one is what
+ * every hook authenticates with. A team access token reaches the Management API, so the hooks create the project
+ * and deployments and manage custom domains (https://docs.convex.dev/management-api#authorization). A production
+ * deploy key names one existing deployment and reaches only it (https://docs.convex.dev/cli/deploy-key-types#production-deploy-keys).
+ */
 export const TEAM_ACCESS_TOKEN_SECRET = "CONVEX_TEAM_ACCESS_TOKEN";
+export const DEPLOY_KEY_SECRET = "CONVEX_DEPLOY_KEY";
+export type ConvexCredentialSecret = typeof TEAM_ACCESS_TOKEN_SECRET | typeof DEPLOY_KEY_SECRET;
+const CREDENTIAL_SECRETS: ReadonlyArray<ConvexCredentialSecret> = [TEAM_ACCESS_TOKEN_SECRET, DEPLOY_KEY_SECRET];
+
+/** The credential secrets a package lists; a valid manifest lists exactly one. */
+export function listedCredentialSecrets(requiredSecrets: ReadonlyArray<string> | undefined): ReadonlyArray<ConvexCredentialSecret> {
+  return CREDENTIAL_SECRETS.filter((secret) => (requiredSecrets ?? []).includes(secret));
+}
 
 /**
  * Words Convex refuses as a deployment reference (Management API, `PlatformUpdateDeploymentArgs.reference`).
@@ -108,10 +121,10 @@ export type EnvironmentConfig = typeof EnvironmentConfig.Type;
 /** The `jive["backend-convex"]` block. */
 export const BackendConvexSchema = Schema.Struct({
   team: Schema.Int.check(Schema.isGreaterThan(0)).annotate({
-    description: "Numeric id of the Convex team that owns the project; the Management API takes ids, not slugs. CONVEX_TEAM_ACCESS_TOKEN must be a token for this team.",
+    description: "Numeric id of the Convex team that owns the project; the Management API takes ids, not slugs. CONVEX_TEAM_ACCESS_TOKEN must be a token for this team, or CONVEX_DEPLOY_KEY a production deploy key of a deployment in it.",
   }),
   project: Schema.NonEmptyString.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/)).annotate({
-    description: "Slug of the Convex project this package deploys to. Created with this name on the first deploy if absent.",
+    description: "Slug of the Convex project this package deploys to. Created with this name on the first deploy if absent (with CONVEX_TEAM_ACCESS_TOKEN; with CONVEX_DEPLOY_KEY it must already exist).",
   }),
   region: Schema.NonEmptyString.annotate({
     description: 'Region new deployments are created in, e.g. "aws-us-east-1". Applies only when a deployment is created; an existing deployment stays where it is.',
@@ -177,6 +190,21 @@ function environmentsProblems(
 }
 
 /**
+ * What a production deploy key cannot do, since only the Management API, which takes a team access token, can:
+ * create a preview deployment per pull request, or add custom domains.
+ */
+function deployKeyProblems(backend: BackendConvexConfig, previews: boolean): ReadonlyArray<string> {
+  const problems: Array<string> = [];
+  if (previews) problems.push(`jive.cicd.deploy.previews needs ${TEAM_ACCESS_TOKEN_SECRET}: a ${DEPLOY_KEY_SECRET} cannot create preview deployments`);
+  for (const [name, config] of Object.entries(backend.environments)) {
+    if (config.customDomains.length > 0) {
+      problems.push(`"${name}" declares custom domains, which need ${TEAM_ACCESS_TOKEN_SECRET}: a ${DEPLOY_KEY_SECRET} cannot reach the Management API that adds them`);
+    }
+  }
+  return problems;
+}
+
+/**
  * The whole package.json. Checks that span `jive.cicd` and this abstract's block run here, at decode: an
  * environment the pipeline would deploy with no configuration, or configuration nothing deploys, fails
  * `get-config` instead of a deploy.
@@ -185,11 +213,13 @@ export const PackageJsonSchema = makeJivePackageJsonSchema({ [BACKEND_CONVEX_KEY
   Schema.makeFilter((packageJson) => {
     const { cicd } = packageJson.jive;
     const backend = packageJson.jive[BACKEND_CONVEX_KEY];
+    const credentials = listedCredentialSecrets(cicd.requiredSecrets);
     const problems = [
       ...environmentsProblems(backend, [...new Set(Object.values(cicd.deploy.branches).flat())], cicd.deploy.previews),
-      ...((cicd.requiredSecrets ?? []).includes(TEAM_ACCESS_TOKEN_SECRET)
+      ...(credentials.length === 1
         ? []
-        : [`jive.cicd.requiredSecrets must include ${TEAM_ACCESS_TOKEN_SECRET}, the credential every deploy hook uses`]),
+        : [`jive.cicd.requiredSecrets must include exactly one of ${TEAM_ACCESS_TOKEN_SECRET} and ${DEPLOY_KEY_SECRET}, the credential every deploy hook uses; it lists ${credentials.length === 0 ? "neither" : "both"}`]),
+      ...(credentials[0] === DEPLOY_KEY_SECRET ? deployKeyProblems(backend, cicd.deploy.previews) : []),
     ];
     return problems.length === 0 ? undefined : problems.join("\n");
   }),
@@ -198,3 +228,4 @@ export type PackageJson = typeof PackageJsonSchema.Type;
 
 /** The `jive` block `get-config` prints. */
 export const JivePackageConfig = PackageJsonSchema.fields.jive;
+

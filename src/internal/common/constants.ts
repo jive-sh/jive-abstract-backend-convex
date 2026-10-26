@@ -6,3 +6,9 @@ export const CONVEX_GENERATED_DIR = "convex/_generated";
 export const CONVEX_CONFIG_FILE = "convex.json";
 /** Convex refuses an expiry less than 30 minutes away; the margin covers clock skew. */
 export const DEPLOY_KEY_LIFETIME_MINUTES = 35;
+/**
+ * The API the `convex` CLI itself calls to learn which deployment a deploy key names
+ * (`deployment/url_for_key`, `deployment/team_and_project_for_key`; convex 1.48.0, `cli/lib/deploymentSelection.ts`).
+ * Convex does not document it; it is the only way a deploy key alone finds its deployment.
+ */
+export const CONVEX_CLI_API_URL = "https://api.convex.dev/api";

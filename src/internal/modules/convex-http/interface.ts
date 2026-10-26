@@ -1,7 +1,7 @@
 import type { Option, Schema } from "effect";
 import type { EffectGen } from "effective-modules";
 
-/** How a Convex API expects the team access token: the Management API takes `Bearer <token>`, a deployment's own API `Convex <token>`. */
+/** Which Convex API a request goes to, by its Authorization scheme: the Management API takes `Bearer <team token>`, a deployment's own API `Convex <team token or deploy key>`. */
 export type ConvexAuthScheme = "Bearer" | "Convex";
 
 export interface ConvexRequest {
@@ -15,7 +15,7 @@ export interface ConvexRequest {
 
 export interface IConvexHttp {
   /**
-   * Calls a Convex API with the team access token and decodes the JSON reply. Any non-2xx status fails with
+   * Calls a Convex API with the package's credential and decodes the JSON reply. Any non-2xx status fails with
    * the status and Convex's reply, which carries its own `code` and `message`, so a refused call says why.
    */
   send<A>(request: ConvexRequest, response: Schema.Codec<A, unknown, never, never>): EffectGen<A, string>;

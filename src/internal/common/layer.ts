@@ -4,6 +4,7 @@ import { FetchHttpClient } from "effect/http";
 import { BackendImpl } from "../modules/backend/impl";
 import { ClientPackageImpl } from "../modules/client-package/impl";
 import { ConvexCliImpl } from "../modules/convex-cli/impl";
+import { ConvexCredentialImpl } from "../modules/convex-credential/impl";
 import { ConvexDeploymentApiImpl } from "../modules/convex-deployment-api/impl";
 import { ConvexHttpImpl } from "../modules/convex-http/impl";
 import { ConvexManagementApiImpl } from "../modules/convex-management-api/impl";
@@ -19,6 +20,7 @@ export const layerLive = pipe(
   Layer.provideMerge(ConvexDeploymentApiImpl.Layer),
   Layer.provideMerge(ConvexManagementApiImpl.Layer),
   Layer.provideMerge(ConvexHttpImpl.Layer),
+  Layer.provideMerge(ConvexCredentialImpl.Layer),
   Layer.provideMerge(PackageImpl.Layer),
   Layer.provideMerge(BunChildProcessSpawner.layer),
   Layer.provideMerge(BunFileSystem.layer),

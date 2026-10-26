@@ -1,10 +1,11 @@
-import { Effect, Option, pipe } from "effect";
+import { Effect, Option, Redacted, pipe } from "effect";
 import { effunct, implementing, type EffectGen } from "effective-modules";
 import type { PipelineContext } from "jive-abstract-library";
-import { BACKEND_CONVEX_KEY, type CustomDomain, type EnvironmentConfig, type PackageJson, type RequestDestination } from "../../public/manifest";
+import { BACKEND_CONVEX_KEY, DEPLOY_KEY_SECRET, TEAM_ACCESS_TOKEN_SECRET, type CustomDomain, type EnvironmentConfig, type PackageJson, type RequestDestination } from "../../public/manifest";
+import { ConvexCredential } from "../convex-credential/interface";
 import type { ConvexDeployment } from "../convex-management-api/interface";
 import { backendModules } from "../index";
-import { deploymentTargetFor, describeTarget } from "./deployment-target";
+import { deploymentTargetFor, describeTarget, type DeploymentTarget } from "./deployment-target";
 import type { IBackend } from "./interface";
 
 const DESTINATIONS: ReadonlyArray<RequestDestination> = ["convexCloud", "convexSite"];
@@ -12,6 +13,7 @@ const DESTINATIONS: ReadonlyArray<RequestDestination> = ["convexCloud", "convexS
 export class BackendImpl extends implementing(backendModules.Backend)
   .uses(
     backendModules.Package,
+    backendModules.ConvexCredential,
     backendModules.ConvexManagementApi,
     backendModules.ConvexDeploymentApi,
     backendModules.ConvexCli,
@@ -35,18 +37,22 @@ export class BackendImpl extends implementing(backendModules.Backend)
 
     yield* clientPackage.checkPublishable(packageJson);
     const clientPlan = yield* clientPackage.plan({ packageJson, environment, context });
+    const credential = yield* this.dependencies.ConvexCredential.current();
     const { deployment, config } = yield* this.resolveDeployment({ packageJson, environment, context });
 
     yield* Effect.log(`Environment variables on ${deployment.name}:`);
     yield* this.dependencies.EnvironmentVariables.apply({ deployment, declared: config.environmentVariables });
 
-    yield* this.pushFunctions({
-      deployment,
-      environment,
-      context,
-      afterDeploy: Option.fromNullishOr(backend.afterDeploy).pipe(Option.map((after) => after.function)),
+    const afterDeploy = Option.fromNullishOr(backend.afterDeploy).pipe(Option.map((after) => after.function));
+    yield* ConvexCredential.$match(credential, {
+      TeamAccessToken: () => effunct(this.pushFunctionsWithMintedKey.bind(this))({ deployment, environment, context, afterDeploy }),
+      DeployKey: ({ key }) => effunct(this.pushFunctions.bind(this))({ deployKey: key, environment, context, afterDeploy }),
     });
-    yield* this.applyCustomDomains(deployment, config.customDomains);
+    yield* ConvexCredential.$match(credential, {
+      TeamAccessToken: () => effunct(this.applyCustomDomains.bind(this))(deployment, config.customDomains),
+      // The manifest allows no custom domains with a deploy key; listing the deployment's needs the Management API.
+      DeployKey: () => Effect.log(`Custom domains: none declared, and ${DEPLOY_KEY_SECRET} cannot list any others; canonical URLs are left as they are`),
+    });
 
     const urls = yield* this.dependencies.ConvexDeploymentApi.getCanonicalUrls(deployment);
     if (clientPlan.deploy) {
@@ -67,27 +73,64 @@ export class BackendImpl extends implementing(backendModules.Backend)
     if (config === undefined) {
       return yield* Effect.fail(`jive.${BACKEND_CONVEX_KEY}.environments has no entry for "${input.environment}"`);
     }
+    const target = deploymentTargetFor(input.environment, input.context);
+    const credential = yield* this.dependencies.ConvexCredential.current();
+    if (credential._tag === "DeployKey") {
+      return { deployment: yield* this.deployKeyDeployment({ credential, target, packageJson: input.packageJson, environment: input.environment }), config };
+    }
     const management = this.dependencies.ConvexManagementApi;
     const project = yield* management.ensureProject({ team: backend.team, slug: backend.project });
-    const target = deploymentTargetFor(input.environment, input.context);
     yield* Effect.log(`${input.environment} deploys to ${describeTarget(target)} of project "${project.slug}"`);
     const deployment = yield* management.ensureDeployment({ project, target, region: backend.region });
     return { deployment, config };
   }
 
   /**
-   * Pushes with a deploy key that exists only for this run: minted for this one deployment, deleted when the
-   * push finishes or fails, and expiring on its own if this process dies first. CI holds no per-deployment key.
+   * The deployment a production deploy key names, which must be the one the manifest describes: in its team and
+   * project, and referenced by the environment's name. A deploy key cannot create a project or deployment, or a
+   * preview deployment per pull request, since only the Management API can.
    */
-  private *pushFunctions(input: {
+  private *deployKeyDeployment(input: {
+    readonly credential: { readonly key: Redacted.Redacted<string>; readonly deploymentName: string };
+    readonly target: DeploymentTarget;
+    readonly packageJson: PackageJson;
+    readonly environment: string;
+  }): EffectGen<ConvexDeployment, string> {
+    const { credential, target, packageJson, environment } = input;
+    const backend = packageJson.jive[BACKEND_CONVEX_KEY];
+    if (target._tag !== "Production") {
+      return yield* Effect.fail(`${environment} deploys to a preview deployment per pull request, which only ${TEAM_ACCESS_TOKEN_SECRET} can create; ${DEPLOY_KEY_SECRET} names one existing deployment`);
+    }
+    const named = yield* this.dependencies.ConvexCredential.deployKeyDeployment(credential);
+    const reference = Option.getOrElse(named.reference, () => "(none)");
+    const mismatches = [
+      ...(named.teamId === backend.team ? [] : [`team ${named.teamId}, not ${backend.team}`]),
+      ...(named.projectSlug === backend.project ? [] : [`project "${named.projectSlug}", not "${backend.project}"`]),
+      ...(Option.contains(named.reference, target.reference) ? [] : [`reference "${reference}", not "${target.reference}"`]),
+    ];
+    if (mismatches.length > 0) {
+      return yield* Effect.fail(
+        `${DEPLOY_KEY_SECRET} names deployment ${named.deployment.name}, which is not ${environment}'s: it has ${mismatches.join(", ")}. `
+        + `Use the production deploy key of the deployment jive.${BACKEND_CONVEX_KEY} describes, or set that deployment's reference to "${target.reference}".`,
+      );
+    }
+    yield* Effect.log(`${environment} deploys to ${named.deployment.name} (${describeTarget(target)} of project "${named.projectSlug}"), the deployment ${DEPLOY_KEY_SECRET} names`);
+    return named.deployment;
+  }
+
+  /**
+   * With a team access token, pushes with a deploy key that exists only for this run: minted for this one
+   * deployment, deleted when the push finishes or fails, and expiring on its own if this process dies first.
+   */
+  private *pushFunctionsWithMintedKey(input: {
     readonly deployment: ConvexDeployment;
     readonly environment: string;
     readonly context: PipelineContext;
     readonly afterDeploy: Option.Option<string>;
   }): EffectGen<void, string> {
-    const { deployment, environment, context, afterDeploy } = input;
+    const { deployment, context } = input;
     const management = this.dependencies.ConvexManagementApi;
-    const cli = this.dependencies.ConvexCli;
+    const push = effunct(this.pushFunctions.bind(this));
     const keyName = `jive ${context.repository.owner}/${context.repository.name} ${context.sourceCommitSha.slice(0, 12)} ${Date.now()}`;
 
     yield* Effect.scoped(Effect.gen(function* () {
@@ -98,16 +141,24 @@ export class BackendImpl extends implementing(backendModules.Backend)
           Effect.catchCause((cause) => Effect.logWarning(`Could not delete deploy key "${keyName}"; it expires on its own: ${String(cause)}`)),
         ),
       );
-      yield* effunct(cli.deploy.bind(cli))({ deployKey, message: `${context.repository.owner}/${context.repository.name}@${context.sourceCommitSha}` });
-      if (Option.isSome(afterDeploy)) {
-        yield* Effect.log(`Running ${afterDeploy.value}`);
-        yield* effunct(cli.run.bind(cli))({
-          deployKey,
-          functionName: afterDeploy.value,
-          args: { sourceCommitSha: context.sourceCommitSha, environment },
-        });
-      }
+      yield* push({ ...input, deployKey });
     }));
+  }
+
+  /** Pushes `convex/` with `deployKey`, then runs `afterDeploy` with it. */
+  private *pushFunctions(input: {
+    readonly deployKey: Redacted.Redacted<string>;
+    readonly environment: string;
+    readonly context: PipelineContext;
+    readonly afterDeploy: Option.Option<string>;
+  }): EffectGen<void, string> {
+    const { deployKey, environment, context, afterDeploy } = input;
+    const cli = this.dependencies.ConvexCli;
+    yield* cli.deploy({ deployKey, message: `${context.repository.owner}/${context.repository.name}@${context.sourceCommitSha}` });
+    if (Option.isSome(afterDeploy)) {
+      yield* Effect.log(`Running ${afterDeploy.value}`);
+      yield* cli.run({ deployKey, functionName: afterDeploy.value, args: { sourceCommitSha: context.sourceCommitSha, environment } });
+    }
   }
 
   /**

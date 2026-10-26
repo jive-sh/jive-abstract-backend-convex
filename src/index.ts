@@ -5,6 +5,7 @@
 export {
   BACKEND_CONVEX_KEY,
   BackendConvexSchema,
+  DEPLOY_KEY_SECRET,
   JivePackageConfig,
   PackageJsonSchema,
   TEAM_ACCESS_TOKEN_SECRET,

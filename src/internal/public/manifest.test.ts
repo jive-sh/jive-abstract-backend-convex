@@ -71,6 +71,18 @@ test("a key pair's public variable cannot also be declared", () => {
   expect(() => decode(manifest({ environments: { latest: { environmentVariables, customDomains: [] } } }))).toThrow(/written by JWT_PRIVATE_KEY/);
 });
 
-test("the team access token must be a required secret, since every deploy hook needs it", () => {
-  expect(() => decode(manifest({ requiredSecrets: [] }))).toThrow(/CONVEX_TEAM_ACCESS_TOKEN/);
+test("exactly one Convex credential must be a required secret, since every deploy hook authenticates with it", () => {
+  expect(() => decode(manifest({ requiredSecrets: [] }))).toThrow(/exactly one of CONVEX_TEAM_ACCESS_TOKEN and CONVEX_DEPLOY_KEY.*neither/);
+  expect(() => decode(manifest({ requiredSecrets: ["CONVEX_TEAM_ACCESS_TOKEN", "CONVEX_DEPLOY_KEY"] }))).toThrow(/lists both/);
+  expect(decode(manifest({ requiredSecrets: ["CONVEX_DEPLOY_KEY", "NPM_TOKEN"] })).jive.cicd.requiredSecrets).toContain("CONVEX_DEPLOY_KEY");
+});
+
+test("a deploy key cannot create preview deployments or add custom domains", () => {
+  const deployKey = { requiredSecrets: ["CONVEX_DEPLOY_KEY"] };
+  expect(() => decode(manifest({ ...deployKey, previews: true, environments: { latest: empty, Preview: empty } })))
+    .toThrow(/previews needs CONVEX_TEAM_ACCESS_TOKEN/);
+  const domain = { domain: "api.example.com", destination: "convexCloud", canonical: true };
+  expect(() => decode(manifest({ ...deployKey, environments: { latest: { environmentVariables: {}, customDomains: [domain] } } })))
+    .toThrow(/"latest" declares custom domains, which need CONVEX_TEAM_ACCESS_TOKEN/);
+  expect(decode(manifest({ previews: true, environments: { latest: empty, Preview: empty } })).jive.cicd.deploy.previews).toBe(true);
 });

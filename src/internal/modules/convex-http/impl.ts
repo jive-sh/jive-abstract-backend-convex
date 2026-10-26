@@ -1,13 +1,16 @@
 import { Effect, Option, Redacted, Schema, SchemaIssue, pipe } from "effect";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 import { implementing, type EffectGen } from "effective-modules";
-import { TEAM_ACCESS_TOKEN_SECRET } from "../../public/manifest";
+import { DEPLOY_KEY_SECRET, TEAM_ACCESS_TOKEN_SECRET } from "../../public/manifest";
+import { ConvexCredential } from "../convex-credential/interface";
 import { backendModules } from "../index";
 import type { ConvexRequest, IConvexHttp } from "./interface";
 
 const formatSchemaError = SchemaIssue.makeFormatterDefault();
 
-export class ConvexHttpImpl extends implementing(backendModules.ConvexHttp).uses(HttpClient.HttpClient) implements IConvexHttp {
+export class ConvexHttpImpl extends implementing(backendModules.ConvexHttp)
+  .uses(backendModules.ConvexCredential, HttpClient.HttpClient)
+  implements IConvexHttp {
   *send<A>(request: ConvexRequest, response: Schema.Codec<A, unknown, never, never>): EffectGen<A, string> {
     const reply = yield* this.execute(request, { absentOn404: false });
     if (Option.isNone(reply)) return yield* Effect.fail(`Could not ${request.purpose}: Convex answered 404`);
@@ -24,23 +27,28 @@ export class ConvexHttpImpl extends implementing(backendModules.ConvexHttp).uses
     return Option.some(yield* this.decode(request, reply.value, response));
   }
 
-  private *teamAccessToken(): EffectGen<Redacted.Redacted<string>, string> {
-    const token = yield* Effect.sync(() => process.env[TEAM_ACCESS_TOKEN_SECRET]);
-    if (token === undefined || token === "") {
-      return yield* Effect.fail(
-        `${TEAM_ACCESS_TOKEN_SECRET} is not set. It is a Convex team access token (Convex dashboard, team settings) `
-        + `stored as a repository secret and listed in jive.cicd.requiredSecrets.`,
-      );
-    }
-    return Redacted.make(token);
+  /**
+   * The Authorization header for one request. The Management API takes only a team access token
+   * (https://docs.convex.dev/management-api#authorization); a deployment's own API also takes a deploy key
+   * (https://docs.convex.dev/deployment-platform-api#authorization). A Management API call under a deploy key
+   * fails naming the step, never silently.
+   */
+  private *authorization(request: ConvexRequest): EffectGen<Redacted.Redacted<string>, string> {
+    const credential = yield* this.dependencies.ConvexCredential.current();
+    return yield* ConvexCredential.$match(credential, {
+      TeamAccessToken: ({ token }) => Effect.succeed(Redacted.make(`${request.auth} ${Redacted.value(token)}`)),
+      DeployKey: ({ key }) => request.auth === "Convex"
+        ? Effect.succeed(Redacted.make(`Convex ${Redacted.value(key)}`))
+        : Effect.fail(`Could not ${request.purpose}: that is a Management API call, which takes only a team access token; this package deploys with ${DEPLOY_KEY_SECRET}, so the step needs ${TEAM_ACCESS_TOKEN_SECRET} instead`),
+    });
   }
 
   /** Returns the reply's text, or none for a 404 when the caller treats that as absence. */
   private *execute(request: ConvexRequest, options: { readonly absentOn404: boolean }): EffectGen<Option.Option<string>, string> {
-    const token = yield* this.teamAccessToken();
+    const authorization = yield* this.authorization(request);
     const base = pipe(
       request.method === "GET" ? HttpClientRequest.get(request.url) : HttpClientRequest.post(request.url),
-      HttpClientRequest.setHeader("Authorization", `${request.auth} ${Redacted.value(token)}`),
+      HttpClientRequest.setHeader("Authorization", Redacted.value(authorization)),
     );
     const httpRequest = request.body === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, request.body);
 
