@@ -1,0 +1,82 @@
+{
+  "$schema": "./package.schema.json",
+  "name": "jive-abstract-backend-convex-fixture",
+  "version": "0.0.1",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "jive:cicd:get-config": "jive-backend-convex cicd get-config",
+    "jive:cicd:build": "jive-backend-convex cicd build",
+    "jive:cicd:audit": "jive-backend-convex cicd audit",
+    "jive:cicd:deploy:url": "jive-backend-convex cicd deploy-url",
+    "jive:cicd:upload-artifacts": "jive-backend-convex cicd upload-artifacts",
+    "jive:cicd:deploy": "jive-backend-convex cicd deploy"
+  },
+  "dependencies": {
+    "convex": "1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.9.3"
+  },
+  "jive": {
+    "cicd": {
+      "deploy": {
+        "verb": "Deploy to",
+        "branches": {
+          "main": ["Staging"]
+        },
+        "previews": true,
+        "sequentially": true
+      },
+      "runsOnPullRequests": true,
+      "runsOn": "ubuntu-latest",
+      "requiredSecrets": ["CONVEX_TEAM_ACCESS_TOKEN"]
+    },
+    "backend-convex": {
+      "team": 551884,
+      "project": "jive-abstract-backend-convex-e2e",
+      "region": "aws-us-east-1",
+      "environments": {
+        "Staging": {
+          "environmentVariables": {
+            "GREETING": {
+              "value": "hello from Staging"
+            },
+            "CONNECTION_KEY": {
+              "generateOnce": {
+                "type": "randomBytes",
+                "bytes": 32,
+                "prefix": "1:"
+              }
+            },
+            "JWT_PRIVATE_KEY": {
+              "generateOnce": {
+                "type": "es256KeyPair",
+                "publicJwksVariable": "JWT_JWKS"
+              }
+            }
+          },
+          "customDomains": [
+            {
+              "domain": "jive-abstract-backend-convex-e2e.example.com",
+              "destination": "convexCloud",
+              "canonical": true
+            }
+          ]
+        },
+        "Preview": {
+          "environmentVariables": {
+            "GREETING": {
+              "value": "hello from Preview"
+            }
+          },
+          "customDomains": []
+        }
+      },
+      "afterDeploy": {
+        "function": "deploys:record"
+      }
+    }
+  }
+}

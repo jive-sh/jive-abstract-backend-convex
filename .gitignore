@@ -1,0 +1,7 @@
+node_modules
+dist
+.DS_Store
+package.schema.json
+test/fixture/node_modules
+test/fixture/dist
+test/fixture/.env.local
