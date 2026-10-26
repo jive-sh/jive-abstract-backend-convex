@@ -116,7 +116,7 @@ validate the manifest as you type. Every field is required, so the schema lists 
 | `audit` | Nothing; replace it with the package's own tests. |
 | `deploy-plan` | Ensures the project and the environment's deployment exist, then plans a deploy (`{"deploy":true,"url":…}`) to the first `convexSite` custom domain, else the deployment's `.convex.site` URL. |
 | `upload-artifacts` | Nothing. |
-| `deploy` | In order: refuses if this environment's client version is already on the registry; ensures the project and deployment; applies environment variables; mints a deploy key and runs `convex deploy`, then `afterDeploy`; deletes the key; adds missing custom domains and sets canonical URLs; publishes the client. |
+| `deploy` | In order: checks whether this environment's client version is already on the registry; ensures the project and deployment; applies environment variables; mints a deploy key and runs `convex deploy`, then `afterDeploy`; deletes the key; adds missing custom domains and sets canonical URLs; publishes the client, unless its version was already on the registry. |
 
 Environment variables are applied before the push, so the pushed code, including an `auth.config.ts` that
 reads deployment variables (as in Convex's [Clerk guide](https://docs.convex.dev/auth/clerk#configuring-the-backend)),
@@ -143,8 +143,9 @@ not answer. A domain removed from the manifest is reported, not deleted.
 Published under the package's name, with the version and dist-tag `jive-abstract-library` uses: environment
 `latest` publishes the bare version under `latest`; any other environment `<version>-<environment>` under
 `<environment>`; Preview `<version>-preview-<sha>` under `preview-<sha>`. Name the production environment
-`latest` so `npm install @example/server` resolves to it. Every deploy publishes, so bump `version` with each
-change meant to deploy; the deploy checks this before touching Convex.
+`latest` so `npm install @example/server` resolves to it. A deploy whose version is already on the registry, such as
+a push without a version bump, still deploys the functions but leaves the published client alone, so bump `version`
+whenever callers need a new client (a changed `api`, or new URLs).
 
 ```ts
 import { ConvexClient } from "convex/browser";

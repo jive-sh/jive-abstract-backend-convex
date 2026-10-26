@@ -34,7 +34,7 @@ export class BackendImpl extends implementing(backendModules.Backend)
     const clientPackage = this.dependencies.ClientPackage;
 
     yield* clientPackage.checkPublishable(packageJson);
-    yield* clientPackage.checkUnpublished({ packageJson, environment, context });
+    const clientPlan = yield* clientPackage.plan({ packageJson, environment, context });
     const { deployment, config } = yield* this.resolveDeployment({ packageJson, environment, context });
 
     yield* Effect.log(`Environment variables on ${deployment.name}:`);
@@ -49,7 +49,11 @@ export class BackendImpl extends implementing(backendModules.Backend)
     yield* this.applyCustomDomains(deployment, config.customDomains);
 
     const urls = yield* this.dependencies.ConvexDeploymentApi.getCanonicalUrls(deployment);
-    yield* clientPackage.publish({ packageJson, environment, context, urls });
+    if (clientPlan.deploy) {
+      yield* clientPackage.publish({ packageJson, environment, context, urls });
+    } else {
+      yield* Effect.log(`Not publishing the client: this environment's version is already on the registry, and callers keep using it`);
+    }
     yield* Effect.log(`Deployed ${packageJson.name} to ${environment}: ${urls.convexCloud}`);
   }
 

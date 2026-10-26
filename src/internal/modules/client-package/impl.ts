@@ -1,9 +1,8 @@
 import { Effect, FileSystem, Option, Schema, pipe } from "effect";
-import { HttpClient } from "effect/http";
 import { implementing, type EffectGen } from "effective-modules";
 import { resolve } from "node:path";
-import { ensureNpm, publishPackage, releaseDistTag, releaseVersion, type PipelineContext } from "jive-abstract-library";
-import { CLIENT_PACKAGE_DIR, CONVEX_CONFIG_FILE, CONVEX_GENERATED_DIR, NPM_REGISTRY_URL } from "../../common/constants";
+import { ensureNpm, planNpmRelease, publishPackage, releaseDistTag, releaseVersion, type DeployPlan, type PipelineContext } from "jive-abstract-library";
+import { CLIENT_PACKAGE_DIR, CONVEX_CONFIG_FILE, CONVEX_GENERATED_DIR } from "../../common/constants";
 import type { PackageJson } from "../../public/manifest";
 import type { CanonicalUrls } from "../convex-deployment-api/interface";
 import { backendModules } from "../index";
@@ -21,12 +20,12 @@ const ConvexJson = Schema.Struct({
   })),
 });
 
-function registryOf(packageJson: PackageJson): string {
-  const configured = Option.flatMap(packageJson.publishConfig, (config) => Option.fromNullishOr(config["registry"]));
-  return Option.match(configured, {
-    onNone: () => NPM_REGISTRY_URL,
-    onSome: (registry) => String(registry).replace(/\/+$/, ""),
-  });
+/** The registry the client publishes to, when the manifest names one rather than using npm's configured registry. */
+function registryOf(packageJson: PackageJson): Option.Option<string> {
+  return pipe(
+    Option.flatMap(packageJson.publishConfig, (config) => Option.fromNullishOr(config["registry"])),
+    Option.map((registry) => String(registry)),
+  );
 }
 
 function indexJs(urls: CanonicalUrls, deployment: { environment: string; sourceCommitSha: string; version: string }): string {
@@ -52,7 +51,7 @@ const INDEX_D_TS = [
 ].join("\n");
 
 export class ClientPackageImpl extends implementing(backendModules.ClientPackage)
-  .uses(FileSystem.FileSystem, HttpClient.HttpClient)
+  .uses(FileSystem.FileSystem)
   implements IClientPackage {
   *checkPublishable(packageJson: PackageJson): EffectGen<void, string> {
     const fs = this.getDependency(FileSystem.FileSystem);
@@ -73,30 +72,17 @@ export class ClientPackageImpl extends implementing(backendModules.ClientPackage
     }
   }
 
-  *checkUnpublished(input: {
+  *plan(input: {
     readonly packageJson: PackageJson;
     readonly environment: string;
     readonly context: PipelineContext;
-  }): EffectGen<void, string> {
+  }): EffectGen<DeployPlan, string> {
     const { packageJson, environment, context } = input;
-    const version = releaseVersion(packageJson.version, environment, context.sourceCommitSha);
-    const registry = registryOf(packageJson);
-    const url = `${registry}/${packageJson.name.replace("/", "%2f")}/${encodeURIComponent(version)}`;
-    const response = yield* pipe(
-      this.getDependency(HttpClient.HttpClient).get(url),
-      Effect.mapError((e) => `Could not ask ${registry} whether ${packageJson.name}@${version} exists: ${e.message}`),
-    );
-    if (response.status === 404) {
-      yield* Effect.log(`${packageJson.name}@${version} is not on ${registry} yet`);
-      return;
-    }
-    if (response.status === 200) {
-      return yield* Effect.fail(
-        `${packageJson.name}@${version} is already published, so this deploy could push functions but not publish their client. `
-        + `Bump "version" in package.json.`,
-      );
-    }
-    return yield* Effect.fail(`Could not ask ${registry} whether ${packageJson.name}@${version} exists: it answered ${response.status}`);
+    return yield* planNpmRelease({
+      name: packageJson.name,
+      version: releaseVersion(packageJson.version, environment, context.sourceCommitSha),
+      registry: registryOf(packageJson),
+    });
   }
 
   *publish(input: {

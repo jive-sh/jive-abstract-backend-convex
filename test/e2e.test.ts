@@ -32,7 +32,7 @@ const project = `${PROJECT_PREFIX}${randomBytes(4).toString("hex")}`;
 const sha = randomBytes(20).toString("hex");
 const workDir = mkdtempSync(join(tmpdir(), "jive-backend-convex-e2e-"));
 
-/** The parts of npm's registry protocol `npm publish` and the hook's version check use. */
+/** The parts of npm's registry protocol `npm publish` and `npm view` (the deploy's version check) use. */
 const published = new Map<string, { distTags: Record<string, string>; tarballs: Map<string, Buffer> }>();
 const registry = Bun.serve({
   port: 0,
@@ -47,6 +47,14 @@ const registry = Bun.serve({
       Object.assign(entry.distTags, body["dist-tags"]);
       published.set(body.name, entry);
       return new Response("{}", { status: 201 });
+    }
+    const document = published.get(path);
+    if (document !== undefined) {
+      const versions = Object.fromEntries([...document.tarballs.keys()].map((version) => [
+        version,
+        { name: path, version, dist: { tarball: `${registryUrl}/${path}/-/${version}.tgz` } },
+      ]));
+      return Response.json({ name: path, "dist-tags": document.distTags, versions });
     }
     const slash = path.lastIndexOf("/");
     const entry = published.get(path.slice(0, slash));
@@ -63,8 +71,8 @@ function writeManifest(version: string): void {
   writeFileSync(join(workDir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-function context(event: object) {
-  return JSON.stringify({ provider: "Github", repository: { owner: "jive-sh", name: "jive-abstract-backend-convex" }, sourceBranch: "main", sourceCommitSha: sha, event });
+function context(event: object, sourceCommitSha = sha) {
+  return JSON.stringify({ provider: "Github", repository: { owner: "jive-sh", name: "jive-abstract-backend-convex" }, sourceBranch: "main", sourceCommitSha, event });
 }
 
 async function hook(name: string, env: Record<string, string> = {}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -200,11 +208,19 @@ test("deploy sets variables, pushes, runs afterDeploy, adds the domain and publi
   expect(fileInTarball(client.tarballs.get("0.0.1-Staging")!, "_generated/api.d.ts")).toContain("latest: FunctionReference<");
 }, HOOK_TIMEOUT_MS);
 
-test("deploying a version already published stops before touching the deployment", async () => {
-  const { exitCode, stderr } = await hook("deploy", { JIVE_DEPLOY_ENVIRONMENT: "Staging", JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }) });
-  expect(exitCode).not.toBe(0);
-  expect(stderr).toContain("already published");
-  expect(stderr).not.toContain("Environment variables on");
+test("a later commit with no version bump deploys its functions and leaves the published client alone", async () => {
+  const laterSha = randomBytes(20).toString("hex");
+  const client = published.get(fixtureManifest.name)!;
+  const clientBefore = client.tarballs.get("0.0.1-Staging")!;
+  const { exitCode, stderr } = await hook("deploy", { JIVE_DEPLOY_ENVIRONMENT: "Staging", JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }, laterSha) });
+  expect(exitCode).toBe(0);
+  expect(stderr).toContain(`${fixtureManifest.name}@0.0.1-Staging is already on ${registryUrl}`);
+  expect(stderr).toContain("Not publishing the client");
+
+  const staging = (await deployments()).find((d) => d.reference === "staging")!;
+  expect((await latestDeploy(staging.deploymentUrl)).sourceCommitSha).toBe(laterSha);
+  expect([...client.tarballs.keys()]).toEqual(["0.0.1-Staging"]);
+  expect(client.tarballs.get("0.0.1-Staging")).toBe(clientBefore);
 }, HOOK_TIMEOUT_MS);
 
 test("a later deploy keeps generate-once keys and updates the rest", async () => {
