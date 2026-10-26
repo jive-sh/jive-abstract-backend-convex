@@ -20,7 +20,7 @@ The abstract itself is an ordinary library: it builds and publishes through
   deployment whose [reference](https://docs.convex.dev/production/multiple-deployments) is the environment name
   in lowercase. `Preview` gets a [preview deployment](https://docs.convex.dev/production/multiple-deployments#preview)
   per pull request (`pr-<number>`), which Convex deletes after its retention period.
-- **Team access token**: the one credential, a Convex
+- **Team access token**: the one Convex credential, a Convex
   [team token](https://docs.convex.dev/management-api) stored as the repository secret `CONVEX_TEAM_ACCESS_TOKEN`.
   Each deploy uses it to mint a [deploy key](https://docs.convex.dev/cli/deploy-key-types) for that one
   deployment, which is deleted when the push finishes and expires on its own after 35 minutes regardless.
@@ -50,7 +50,7 @@ The abstract itself is an ordinary library: it builds and publishes through
       "deploy": { "verb": "Deploy to", "branches": { "main": ["latest"] }, "previews": false, "sequentially": true },
       "runsOnPullRequests": true,
       "runsOn": "ubuntu-latest",
-      "requiredSecrets": ["CONVEX_TEAM_ACCESS_TOKEN", "NPM_TOKEN"]
+      "requiredSecrets": ["CONVEX_TEAM_ACCESS_TOKEN"]
     },
     "backend-convex": {
       "team": 551884,
@@ -153,6 +153,13 @@ import { api, convexUrl } from "@example/server";
 const client = new ConvexClient(convexUrl);
 const latest = await client.query(api.deploys.latest, {});
 ```
+
+Publishing goes through `jive-abstract-library`'s `publishPackage`, the same npm path a library's release
+takes: it authenticates with `NPM_TOKEN` when that secret is set, and otherwise relies on npm
+[trusted publishing](https://docs.npmjs.com/trusted-publishers), which needs a trusted publisher on the package
+naming the caller workflow `pipeline.yml` and the environment being deployed, with publishing allowed. npm
+configures trusted publishers in a package's own settings page, so the first publish of a new client uses
+`NPM_TOKEN` (listed in `requiredSecrets`); remove it once the trusted publisher is in place.
 
 The package exports `api`, the types `DataModel`, `Doc`, `Id` and `TableNames`, `convexUrl` (the canonical
 client API URL), `convexSiteUrl`, and `deployment` (`environment`, `sourceCommitSha`, `version`). It declares
