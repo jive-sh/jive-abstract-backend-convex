@@ -8,7 +8,7 @@
     "jive:cicd:get-config": "jive-backend-convex cicd get-config",
     "jive:cicd:build": "jive-backend-convex cicd build",
     "jive:cicd:audit": "jive-backend-convex cicd audit",
-    "jive:cicd:deploy:url": "jive-backend-convex cicd deploy-url",
+    "jive:cicd:deploy:plan": "jive-backend-convex cicd deploy-plan",
     "jive:cicd:upload-artifacts": "jive-backend-convex cicd upload-artifacts",
     "jive:cicd:deploy": "jive-backend-convex cicd deploy"
   },

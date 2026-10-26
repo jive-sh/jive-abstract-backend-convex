@@ -38,7 +38,7 @@ The abstract itself is an ordinary library: it builds and publishes through
     "jive:cicd:get-config": "jive-backend-convex cicd get-config",
     "jive:cicd:build": "jive-backend-convex cicd build",
     "jive:cicd:audit": "bun test",
-    "jive:cicd:deploy:url": "jive-backend-convex cicd deploy-url",
+    "jive:cicd:deploy:plan": "jive-backend-convex cicd deploy-plan",
     "jive:cicd:upload-artifacts": "jive-backend-convex cicd upload-artifacts",
     "jive:cicd:deploy": "jive-backend-convex cicd deploy",
     "dev": "jive-backend-convex dev"
@@ -114,7 +114,7 @@ validate the manifest as you type. Every field is required, so the schema lists 
 | `get-config` | Prints the validated `jive` block. |
 | `build` | Checks `convex.json` asks for static codegen and `convex` is a dependency, then typechecks `convex/` with `tsc`. No push. |
 | `audit` | Nothing; replace it with the package's own tests. |
-| `deploy-url` | Ensures the project and the environment's deployment exist, then prints the first `convexSite` custom domain, else the deployment's `.convex.site` URL. |
+| `deploy-plan` | Ensures the project and the environment's deployment exist, then plans a deploy (`{"deploy":true,"url":…}`) to the first `convexSite` custom domain, else the deployment's `.convex.site` URL. |
 | `upload-artifacts` | Nothing. |
 | `deploy` | In order: refuses if this environment's client version is already on the registry; ensures the project and deployment; applies environment variables; mints a deploy key and runs `convex deploy`, then `afterDeploy`; deletes the key; adds missing custom domains and sets canonical URLs; publishes the client. |
 

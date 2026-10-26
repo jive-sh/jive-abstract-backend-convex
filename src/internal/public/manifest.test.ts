@@ -10,7 +10,7 @@ function manifest(overrides: { branches?: Record<string, string[]>; previews?: b
     license: "MIT",
     scripts: Object.fromEntries([
       "jive:cicd:get-config", "jive:cicd:build", "jive:cicd:audit",
-      "jive:cicd:deploy:url", "jive:cicd:upload-artifacts", "jive:cicd:deploy",
+      "jive:cicd:deploy:plan", "jive:cicd:upload-artifacts", "jive:cicd:deploy",
     ].map((hook) => [hook, "x"])),
     jive: {
       cicd: {

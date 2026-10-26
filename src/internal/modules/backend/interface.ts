@@ -1,7 +1,7 @@
 import type { EffectGen } from "effective-modules";
 import type { PipelineContext } from "jive-abstract-library";
 
-/** One environment of a Convex backend package: what the `deploy-url` and `deploy` hooks act on. */
+/** One environment of a Convex backend package: what the `deploy-plan` and `deploy` hooks act on. */
 export interface IBackend {
   /**
    * The URL the environment is reached at: its first `convexSite` custom domain, else its deployment's

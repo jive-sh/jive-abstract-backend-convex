@@ -164,11 +164,11 @@ test("build checks static codegen and typechecks the functions", async () => {
   expect((await hook("build")).exitCode).toBe(0);
 }, HOOK_TIMEOUT_MS);
 
-test("deploy-url creates the project and Staging deployment and prints its HTTP actions URL", async () => {
-  const { exitCode, stdout } = await hook("deploy-url", { JIVE_DEPLOY_ENVIRONMENT: "Staging", JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }) });
+test("deploy-plan creates the project and Staging deployment and plans a deploy to its HTTP actions URL", async () => {
+  const { exitCode, stdout } = await hook("deploy-plan", { JIVE_DEPLOY_ENVIRONMENT: "Staging", JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }) });
   expect(exitCode).toBe(0);
   const staging = (await deployments()).find((d) => d.reference === "staging")!;
-  expect(stdout.trim()).toBe(staging.deploymentUrl.replace(".convex.cloud", ".convex.site"));
+  expect(JSON.parse(stdout)).toEqual({ deploy: true, url: staging.deploymentUrl.replace(".convex.cloud", ".convex.site") });
 }, HOOK_TIMEOUT_MS);
 
 let firstKeys: Record<string, string | undefined> = {};
@@ -218,7 +218,7 @@ test("a later deploy keeps generate-once keys and updates the rest", async () =>
 
 test("Preview deploys a pull request to its own preview deployment and client tag", async () => {
   const event = { type: "PULL_REQUEST", id: "7", destinationBranch: "main" };
-  expect((await hook("deploy-url", { JIVE_DEPLOY_ENVIRONMENT: "Preview", JIVE_PIPELINE_CONTEXT: context(event) })).exitCode).toBe(0);
+  expect((await hook("deploy-plan", { JIVE_DEPLOY_ENVIRONMENT: "Preview", JIVE_PIPELINE_CONTEXT: context(event) })).exitCode).toBe(0);
   expect((await hook("deploy", { JIVE_DEPLOY_ENVIRONMENT: "Preview", JIVE_PIPELINE_CONTEXT: context(event) })).exitCode).toBe(0);
 
   const preview = (await deployments()).find((d) => d.previewIdentifier === "pr-7")!;

@@ -3,7 +3,7 @@
   "license": "MIT",
   "name": "jive-abstract-backend-convex",
   "description": "A Jive abstract for Convex backends: its CI/CD hooks push a package's Convex functions to one deployment per environment and publish the matching client to npm.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "peerDependencies": {
     "effect": "^4.0.0",
@@ -13,7 +13,7 @@
     "@effect/platform-bun": "^4.0.0",
     "commander": "^13.1.0",
     "effective-modules": "0.3.1-effect4",
-    "jive-abstract-library": "^0.1.10"
+    "jive-abstract-library": "^0.2.0"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
@@ -24,7 +24,7 @@
     "jive:cicd:get-config": "jive-library cicd get-config",
     "jive:cicd:build": "jive-library cicd build",
     "jive:cicd:audit": "tsc --noEmit -p tsconfig.json && bun test",
-    "jive:cicd:deploy:url": "jive-library cicd deploy-url",
+    "jive:cicd:deploy:plan": "jive-library cicd deploy-plan",
     "jive:cicd:upload-artifacts": "jive-library cicd upload-artifacts",
     "jive:cicd:deploy": "jive-library cicd deploy",
     "dev": "jive-library dev"
