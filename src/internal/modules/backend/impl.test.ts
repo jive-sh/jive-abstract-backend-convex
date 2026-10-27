@@ -54,6 +54,7 @@ function packageJson(input: { previews?: boolean } = {}): PackageJson {
         region: "aws-us-east-1",
         environments: input.previews === true ? { latest: environment, Preview: environment } : { latest: environment },
         afterDeploy: { function: "deploys:record" },
+        provisionWithJive: null,
       },
     },
   });

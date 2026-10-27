@@ -111,7 +111,8 @@ export class BackendImpl extends implementing(backendModules.Backend)
     if (mismatches.length > 0) {
       return yield* Effect.fail(
         `${DEPLOY_KEY_SECRET} names deployment ${named.deployment.name}, which is not ${environment}'s: it has ${mismatches.join(", ")}. `
-        + `Use the production deploy key of the deployment jive.${BACKEND_CONVEX_KEY} describes, or set that deployment's reference to "${target.reference}".`,
+        + `Use the production deploy key of the deployment jive.${BACKEND_CONVEX_KEY} describes, or set that deployment's reference to "${target.reference}" `
+        + `(a project's default production deployment has reference "production"; the Management API's PATCH /v1/deployments/${named.deployment.name} changes it).`,
       );
     }
     yield* Effect.log(`${environment} deploys to ${named.deployment.name} (${describeTarget(target)} of project "${named.projectSlug}"), the deployment ${DEPLOY_KEY_SECRET} names`);

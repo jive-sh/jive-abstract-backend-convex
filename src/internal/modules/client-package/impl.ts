@@ -3,7 +3,7 @@ import { implementing, type EffectGen } from "effective-modules";
 import { resolve } from "node:path";
 import { ensureNpm, planNpmRelease, publishPackage, releaseDistTag, releaseVersion, type DeployPlan, type PipelineContext } from "jive-abstract-library";
 import { CLIENT_PACKAGE_DIR, CONVEX_CONFIG_FILE, CONVEX_GENERATED_DIR } from "../../common/constants";
-import type { PackageJson } from "../../public/manifest";
+import { BACKEND_CONVEX_KEY, type PackageJson } from "../../public/manifest";
 import type { CanonicalUrls } from "../convex-deployment-api/interface";
 import { backendModules } from "../index";
 import type { IClientPackage } from "./interface";
@@ -129,7 +129,13 @@ export class ClientPackageImpl extends implementing(backendModules.ClientPackage
 
     yield* Effect.log(`Publishing the client ${packageJson.name}@${version} under "${distTag}" (Convex URL ${urls.convexCloud})`);
     yield* ensureNpm();
-    yield* publishPackage({ packageDir, outDir: resolve("dist"), version, distTag });
+    yield* publishPackage({
+      packageDir,
+      outDir: resolve("dist"),
+      version,
+      distTag,
+      provisionWithJive: packageJson.jive[BACKEND_CONVEX_KEY].provisionWithJive,
+    });
   }
 
   private staticCodegenAdvice(): string {

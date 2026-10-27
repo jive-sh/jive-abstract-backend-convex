@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import { PackageJsonSchema } from "./manifest";
 
 function manifest(overrides: { branches?: Record<string, string[]>; previews?: boolean; environments?: Record<string, unknown>; requiredSecrets?: string[] } = {}) {
@@ -25,6 +25,7 @@ function manifest(overrides: { branches?: Record<string, string[]>; previews?: b
         region: "aws-us-east-1",
         environments: overrides.environments ?? { latest: { environmentVariables: {}, customDomains: [] } },
         afterDeploy: null,
+        provisionWithJive: null,
       },
     },
   };
@@ -85,4 +86,14 @@ test("a deploy key cannot create preview deployments or add custom domains", () 
   expect(() => decode(manifest({ ...deployKey, environments: { latest: { environmentVariables: {}, customDomains: [domain] } } })))
     .toThrow(/"latest" declares custom domains, which need CONVEX_TEAM_ACCESS_TOKEN/);
   expect(decode(manifest({ previews: true, environments: { latest: empty, Preview: empty } })).jive.cicd.deploy.previews).toBe(true);
+});
+
+test("provisionWithJive is required: null publishes the client as before, { serverUrl } provisions it first", () => {
+  const withProvisioning = manifest();
+  (withProvisioning.jive["backend-convex"] as Record<string, unknown>)["provisionWithJive"] = { serverUrl: "https://api.jive.sh" };
+  expect(decode(withProvisioning).jive["backend-convex"].provisionWithJive).toEqual(Option.some({ serverUrl: "https://api.jive.sh" }));
+  expect(decode(manifest()).jive["backend-convex"].provisionWithJive).toEqual(Option.none());
+  const without = manifest();
+  delete (without.jive["backend-convex"] as Record<string, unknown>)["provisionWithJive"];
+  expect(() => decode(without)).toThrow(/provisionWithJive/);
 });

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { PREVIEW_ENVIRONMENT, isEnvironment, makeJivePackageJsonSchema } from "jive-abstract-library";
+import { PREVIEW_ENVIRONMENT, ProvisionWithJiveSchema, isEnvironment, makeJivePackageJsonSchema } from "jive-abstract-library";
 
 /**
  * The shape a Convex backend package's package.json must have: the fields every Jive package has, plus the
@@ -137,6 +137,12 @@ export const BackendConvexSchema = Schema.Struct({
       description: 'A Convex function, e.g. "deploys:record", run after every push with {"sourceCommitSha": string, "environment": string}. May be internal.',
     }),
   })).annotate({ description: "A function to run once the push succeeds, or null for none." }),
+  /**
+   * The client publish's provisioning, the same setting as a library's `jive.library.provisionWithJive`: null
+   * publishes as before; `{ serverUrl }` has the deploy ask that Jive server to provision the client package
+   * right before publishing it, with the deploy job's GitHub OIDC token.
+   */
+  provisionWithJive: ProvisionWithJiveSchema,
 });
 export type BackendConvexConfig = typeof BackendConvexSchema.Type;
 

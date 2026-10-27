@@ -28,9 +28,11 @@ The abstract itself is an ordinary library: it builds and publishes through
     deleted when the push finishes and expiring on its own after 35 minutes regardless.
   - **Production deploy key** (`CONVEX_DEPLOY_KEY`): a key of the form `prod:<deployment-name>|…` that "grants
     permissions to deploy code to" one deployment ([production deploy keys](https://docs.convex.dev/cli/deploy-key-types#production-deploy-keys)),
-    made in the Convex dashboard under that deployment's settings. It reaches that deployment's own API too
-    ([authorization](https://docs.convex.dev/deployment-platform-api#authorization)), but not the Management API,
-    so the deployment must already exist and the package can have neither previews nor custom domains (see below).
+    made in the Convex dashboard under that deployment's settings, where you "choose which actions it's allowed to
+    perform" ([from the dashboard](https://docs.convex.dev/cli/deploy-key-types#from-the-dashboard)). It reaches that
+    deployment's own API too ([authorization](https://docs.convex.dev/deployment-platform-api#authorization)), but
+    not the Management API, so the deployment must already exist and the package can have neither previews nor
+    custom domains (see below).
 
 ## Extending it
 
@@ -75,7 +77,8 @@ The abstract itself is an ordinary library: it builds and publishes through
           ]
         }
       },
-      "afterDeploy": { "function": "deploys:record" }
+      "afterDeploy": { "function": "deploys:record" },
+      "provisionWithJive": null
     }
   }
 }
@@ -105,6 +108,7 @@ validate the manifest as you type. Every field is required, so the schema lists 
 | `environments.*.environmentVariables` | `{ "value": "…" }` is written on every deploy. `{ "generateOnce": … }` is generated only when the deployment provably lacks it (below). Variables not declared here are left alone and listed by name in the log. |
 | `environments.*.customDomains` | `domain`, `destination` (`convexCloud` for the client API, `convexSite` for HTTP actions, see [custom domains](https://docs.convex.dev/production/custom-domains)) and `canonical`. Must be empty for `Preview`. |
 | `afterDeploy` | A function run after every push with `{ "sourceCommitSha", "environment" }`, or `null`. It may be internal. |
+| `provisionWithJive` | `null` to publish the client as before, or `{ "serverUrl": … }` to have the deploy call that Jive server's `packages:provision` with the job's GitHub OIDC token right before publishing the client; a refusal fails the deploy with the client unpublished (the functions are already pushed). The same setting, and schema, as `jive-abstract-library`'s `jive.library.provisionWithJive`, passed to its `publishPackage`. Needs `id-token: write`, which the deploy job of Jive's reusable pipeline has. |
 
 `generateOnce` types:
 
@@ -137,6 +141,27 @@ With `CONVEX_DEPLOY_KEY` in `requiredSecrets`, each step uses the key, or cannot
 | Environment variables, canonical URLs | Through the deployment's own API with `Convex <key>`. | [Deployment API authorization](https://docs.convex.dev/deployment-platform-api#authorization) |
 | Push and `afterDeploy` | `convex deploy` and `convex run` with the key itself; no key is minted or deleted. | [Production deploy keys](https://docs.convex.dev/cli/deploy-key-types#production-deploy-keys) |
 | Custom domains | Cannot list or add them: Management API. `customDomains` must be empty; canonical URLs are left as they are. | [Management API authorization](https://docs.convex.dev/management-api#authorization) |
+
+**The deployment and the key, set up once.** The deployment's reference must be the environment's name in
+lowercase (`latest` for `latest`). A project's default production deployment has reference `production`
+([deployment types](https://docs.convex.dev/production/multiple-deployments#deployment-types)), so either create
+the deployment with that reference, `npx convex deployment create latest --type=prod`
+([from a script](https://docs.convex.dev/production/multiple-deployments#from-a-script)), or change an existing
+one's reference with the Management API's update-deployment call (`PATCH /v1/deployments/<name>` with
+`{ "reference": "latest" }`; spec at https://api.convex.dev/v1/openapi.json, gated by `deployment:updateReference`,
+[role actions](https://docs.convex.dev/team-management/role-actions#lifecycle-and-configuration)). The key must be
+allowed every action the hooks take ([role actions](https://docs.convex.dev/team-management/role-actions#data-plane-and-runtime)):
+
+| Action | Needed for |
+| --- | --- |
+| `deployment:deploy` | `convex deploy` |
+| `deployment:env:view` | Reading the variables first; without it no `generateOnce` key can be proven absent, so the deploy stops |
+| `deployment:env:write` | Setting the declared variables |
+| `deployment:functions:runInternalQueries`, `runInternalMutations`, `runInternalActions` | `afterDeploy`, when it names an internal function |
+
+Convex's docs name no action for reading the canonical URLs, which `deploy-plan` and the client publish need;
+this repo's end-to-end test mints a key with exactly the actions above and runs every hook with it, so a key with
+them is known to be enough.
 
 A key that is not a production key (`dev:`, `preview:`) is refused. If the variable the manifest does not list is
 set as well, every hook refuses rather than guess which credential acts; Jive's pipeline only exports the secrets
@@ -201,8 +226,8 @@ client API URL), `convexSiteUrl`, and `deployment` (`environment`, `sourceCommit
   `requiredSecrets` is enforced in the build job. A deploy key's reach is one deployment; a team token's, the team.
 - **A deploy key's deployment is found through Convex's CLI endpoints**, which Convex does not document; a change
   there breaks deploy-key runs, with the reply quoted in the error.
-- Whether a dashboard-made production deploy key may set environment variables and canonical URLs is unverified;
-  reading both with a dev deploy key was checked on 2026-10-26.
+- With a deploy key, canonical URLs are only read, never set: the manifest allows no custom domains, and listing
+  the deployment's is a Management API call.
 - The generated `api.d.ts` also declares internal function names (types only; clients cannot call them).
 
 ## Developing this abstract
@@ -210,5 +235,7 @@ client API URL), `convexSiteUrl`, and `deployment` (`environment`, `sourceCommit
 `bun run jive:cicd:build` builds and installs the CLI locally; `bun run jive:cicd:audit` typechecks and runs
 the tests, including `test/e2e.test.ts`, which runs every hook of the built CLI against `test/fixture` on a
 throwaway Convex project (deleted afterwards) and publishes the fixture's client to a registry the test serves
-itself. It needs `CONVEX_TEAM_ACCESS_TOKEN` for the fixture's team. The deploy-key path is covered by unit tests against
-fakes (`src/internal/modules/backend/impl.test.ts`, `convex-credential/impl.test.ts`), not run live.
+itself. It needs `CONVEX_TEAM_ACCESS_TOKEN` for the fixture's team. After the team-token hooks it covers the deploy-key
+path live: it creates a production deployment with reference `latest` in the throwaway project, mints a production
+deploy key for it with only the actions listed above, and runs `deploy-plan` and `deploy` with only
+`CONVEX_DEPLOY_KEY` set, the client publish going through a fake Jive server's `packages:provision`.

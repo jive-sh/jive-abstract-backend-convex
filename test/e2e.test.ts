@@ -1,7 +1,9 @@
 /**
  * Runs all six hooks of the built `jive-backend-convex` CLI against the fixture backend in `test/fixture`,
  * on a throwaway Convex project in the fixture's team, which is deleted afterwards. The fixture's client
- * is published to an npm registry this test serves itself, never to npm.
+ * is published to an npm registry this test serves itself, never to npm. The same process plays GitHub's
+ * ID-token endpoint and a Jive server's `packages:provision` for the deploy-key run, whose client publish goes
+ * through provisioning.
  *
  * Needs CONVEX_TEAM_ACCESS_TOKEN (a token for the fixture's team) and a prior `bun run jive:cicd:build`,
  * which installs the CLI this test runs.
@@ -34,16 +36,25 @@ const workDir = mkdtempSync(join(tmpdir(), "jive-backend-convex-e2e-"));
 
 /** The parts of npm's registry protocol `npm publish` and `npm view` (the deploy's version check) use. */
 const published = new Map<string, { distTags: Record<string, string>; tarballs: Map<string, Buffer> }>();
+/** What the fake Jive server and registry were asked, in order, to check provisioning comes before the publish. */
+const events: Array<string> = [];
 const registry = Bun.serve({
   port: 0,
   async fetch(request) {
     const path = decodeURIComponent(new URL(request.url).pathname.slice(1));
+    if (path === "-/github-id-token") return Response.json({ value: "e2e-github-id-token" });
+    if (path === "api/action" && request.method === "POST") {
+      const call = await request.json() as { path: string; args: { packageName: string } };
+      events.push(`${call.path} ${call.args.packageName}`);
+      return Response.json({ status: "success", value: { status: "ready" }, logLines: [] });
+    }
     if (request.method === "PUT") {
       const body = await request.json() as { name: string; "dist-tags": Record<string, string>; _attachments: Record<string, { data: string }>; versions: Record<string, unknown> };
       const entry = published.get(body.name) ?? { distTags: {}, tarballs: new Map() };
       const [version] = Object.keys(body.versions);
       const [attachment] = Object.values(body._attachments);
       entry.tarballs.set(version!, Buffer.from(attachment!.data, "base64"));
+      events.push(`publish ${body.name}@${version}`);
       Object.assign(entry.distTags, body["dist-tags"]);
       published.set(body.name, entry);
       return new Response("{}", { status: 201 });
@@ -69,6 +80,48 @@ function writeManifest(version: string): void {
   manifest.jive["backend-convex"].project = project;
   manifest.publishConfig = { registry: registryUrl };
   writeFileSync(join(workDir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+/**
+ * The fixture as a package deploying with a production deploy key: one environment, `latest`, no previews or
+ * custom domains (a deploy key cannot reach the Management API that makes them), and its client publish provisioned
+ * by the fake Jive server.
+ */
+function writeDeployKeyManifest(version: string): void {
+  const manifest = structuredClone(fixtureManifest);
+  manifest.version = version;
+  manifest.publishConfig = { registry: registryUrl };
+  manifest.jive.cicd.deploy = { ...manifest.jive.cicd.deploy, branches: { main: ["latest"] }, previews: false };
+  manifest.jive.cicd.requiredSecrets = ["CONVEX_DEPLOY_KEY"];
+  const backend = manifest.jive["backend-convex"];
+  backend.project = project;
+  backend.environments = {
+    latest: { environmentVariables: { GREETING: { value: "hello from latest" }, CONNECTION_KEY: backend.environments.Staging.environmentVariables.CONNECTION_KEY }, customDomains: [] },
+  };
+  backend.provisionWithJive = { serverUrl: registryUrl };
+  writeFileSync(join(workDir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+/**
+ * The actions this abstract's README says a production deploy key needs
+ * (https://docs.convex.dev/team-management/role-actions#data-plane-and-runtime); the deploy-key run proves they suffice.
+ */
+const DEPLOY_KEY_ACTIONS = [
+  "deployment:deploy",
+  "deployment:env:view",
+  "deployment:env:write",
+  "deployment:functions:runInternalQueries",
+  "deployment:functions:runInternalMutations",
+  "deployment:functions:runInternalActions",
+];
+
+async function mintProductionDeployKey(deployment: Deployment, name: string): Promise<string> {
+  const { deployKey } = await management<{ deployKey: string }>("POST", `/deployments/${deployment.name}/create_deploy_key`, {
+    name,
+    expiresAt: Date.now() + 40 * 60_000,
+    allowedActions: DEPLOY_KEY_ACTIONS,
+  });
+  return deployKey;
 }
 
 function context(event: object, sourceCommitSha = sha) {
@@ -247,4 +300,55 @@ test("Preview deploys a pull request to its own preview deployment and client ta
 test("upload-artifacts and audit succeed without doing anything", async () => {
   expect((await hook("upload-artifacts", { JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }) })).exitCode).toBe(0);
   expect((await hook("audit")).exitCode).toBe(0);
+}, HOOK_TIMEOUT_MS);
+
+test("with only a production deploy key, the hooks deploy to the key's deployment and the client publish is provisioned first", async () => {
+  const found = await management<{ id: number }>("GET", `/teams/${team}/projects/${project}`);
+  const latest = await management<Deployment>("POST", `/projects/${found.id}/create_deployment`, {
+    type: "prod",
+    reference: "latest",
+    region: fixtureManifest.jive["backend-convex"].region,
+  });
+  const deployKey = await mintProductionDeployKey(latest, "e2e production deploy key");
+  expect(deployKey.startsWith(`prod:${latest.name}|`)).toBe(true);
+
+  writeDeployKeyManifest("0.0.3");
+  const env = {
+    CONVEX_TEAM_ACCESS_TOKEN: "",
+    CONVEX_DEPLOY_KEY: deployKey,
+    JIVE_DEPLOY_ENVIRONMENT: "latest",
+    JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }),
+    ACTIONS_ID_TOKEN_REQUEST_URL: `${registryUrl}/-/github-id-token?api-version=2.0`,
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "e2e",
+  };
+  const plan = await hook("deploy-plan", env);
+  expect(plan.exitCode).toBe(0);
+  expect(JSON.parse(plan.stdout)).toEqual({ deploy: true, url: latest.deploymentUrl.replace(".convex.cloud", ".convex.site") });
+
+  events.length = 0;
+  const { exitCode, stderr } = await hook("deploy", env);
+  expect(exitCode).toBe(0);
+  expect(stderr).toContain(`the deployment CONVEX_DEPLOY_KEY names`);
+  expect(await latestDeploy(latest.deploymentUrl)).toEqual({ sourceCommitSha: sha, environment: "latest", greeting: "hello from latest" });
+  const variables = await environmentVariables(latest);
+  expect(variables["CONNECTION_KEY"]).toMatch(/^1:[A-Za-z0-9+/]{43}=$/);
+  const keys = await management<Array<{ name: string }>>("GET", `/deployments/${latest.name}/list_deploy_keys`);
+  expect(keys.map((key) => key.name).filter((name) => name.startsWith("jive "))).toEqual([]);
+  expect(events).toEqual([`packages:provision ${fixtureManifest.name}`, `publish ${fixtureManifest.name}@0.0.3`]);
+  expect(published.get(fixtureManifest.name)!.distTags["latest"]).toBe("0.0.3");
+}, HOOK_TIMEOUT_MS);
+
+test("a production deploy key for another environment's deployment is refused before anything changes", async () => {
+  const staging = (await deployments()).find((d) => d.reference === "staging")!;
+  const stagingKey = await mintProductionDeployKey(staging, "e2e staging deploy key");
+  const before = await latestDeploy(staging.deploymentUrl);
+  const { exitCode, stderr } = await hook("deploy", {
+    CONVEX_TEAM_ACCESS_TOKEN: "",
+    CONVEX_DEPLOY_KEY: stagingKey,
+    JIVE_DEPLOY_ENVIRONMENT: "latest",
+    JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }, randomBytes(20).toString("hex")),
+  });
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain(`reference "staging", not "latest"`);
+  expect(await latestDeploy(staging.deploymentUrl)).toEqual(before);
 }, HOOK_TIMEOUT_MS);

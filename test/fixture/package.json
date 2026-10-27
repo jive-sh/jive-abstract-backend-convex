@@ -76,7 +76,8 @@
       },
       "afterDeploy": {
         "function": "deploys:record"
-      }
+      },
+      "provisionWithJive": null
     }
   }
 }
