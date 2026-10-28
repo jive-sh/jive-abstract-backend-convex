@@ -30,6 +30,7 @@ if (!existsSync(CLI)) throw new Error(`${CLI} does not exist; run \`bun run jive
 
 const fixtureManifest = JSON.parse(readFileSync(resolve(import.meta.dir, "fixture/package.json"), "utf-8"));
 const team: number = fixtureManifest.jive["backend-convex"].team;
+const fixtureClientName: string = fixtureManifest.jive["backend-convex"].clientPackageName;
 const project = `${PROJECT_PREFIX}${randomBytes(4).toString("hex")}`;
 const sha = randomBytes(20).toString("hex");
 const workDir = mkdtempSync(join(tmpdir(), "jive-backend-convex-e2e-"));
@@ -254,7 +255,7 @@ test("deploy sets variables, pushes, runs afterDeploy, adds the domain and publi
   const keys = await management<Array<{ name: string }>>("GET", `/deployments/${staging.name}/list_deploy_keys`);
   expect(keys.filter((key) => key.name.startsWith("jive "))).toEqual([]);
 
-  const client = published.get(fixtureManifest.name)!;
+  const client = published.get(fixtureClientName)!;
   expect(client.distTags["Staging"]).toBe("0.0.1-Staging");
   const index = fileInTarball(client.tarballs.get("0.0.1-Staging")!, "index.js");
   expect(index).toContain(`export const convexUrl = ${JSON.stringify(staging.deploymentUrl)};`);
@@ -263,11 +264,11 @@ test("deploy sets variables, pushes, runs afterDeploy, adds the domain and publi
 
 test("a later commit with no version bump deploys its functions and leaves the published client alone", async () => {
   const laterSha = randomBytes(20).toString("hex");
-  const client = published.get(fixtureManifest.name)!;
+  const client = published.get(fixtureClientName)!;
   const clientBefore = client.tarballs.get("0.0.1-Staging")!;
   const { exitCode, stderr } = await hook("deploy", { JIVE_DEPLOY_ENVIRONMENT: "Staging", JIVE_PIPELINE_CONTEXT: context({ type: "COMMIT" }, laterSha) });
   expect(exitCode).toBe(0);
-  expect(stderr).toContain(`${fixtureManifest.name}@0.0.1-Staging is already on ${registryUrl}`);
+  expect(stderr).toContain(`${fixtureClientName}@0.0.1-Staging is already on ${registryUrl}`);
   expect(stderr).toContain("Not publishing the client");
 
   const staging = (await deployments()).find((d) => d.reference === "staging")!;
@@ -294,7 +295,7 @@ test("Preview deploys a pull request to its own preview deployment and client ta
   expect(preview.deploymentType).toBe("preview");
   expect((await latestDeploy(preview.deploymentUrl)).greeting).toBe("hello from Preview");
   const tag = `preview-${sha.slice(0, 8)}`;
-  expect(published.get(fixtureManifest.name)!.distTags[tag]).toBe(`0.0.2-${tag}`);
+  expect(published.get(fixtureClientName)!.distTags[tag]).toBe(`0.0.2-${tag}`);
 }, HOOK_TIMEOUT_MS);
 
 test("upload-artifacts and audit succeed without doing anything", async () => {
@@ -334,8 +335,8 @@ test("with only a production deploy key, the hooks deploy to the key's deploymen
   expect(variables["CONNECTION_KEY"]).toMatch(/^1:[A-Za-z0-9+/]{43}=$/);
   const keys = await management<Array<{ name: string }>>("GET", `/deployments/${latest.name}/list_deploy_keys`);
   expect(keys.map((key) => key.name).filter((name) => name.startsWith("jive "))).toEqual([]);
-  expect(events).toEqual([`packages:provision ${fixtureManifest.name}`, `publish ${fixtureManifest.name}@0.0.3`]);
-  expect(published.get(fixtureManifest.name)!.distTags["latest"]).toBe("0.0.3");
+  expect(events).toEqual([`packages:provision ${fixtureClientName}`, `publish ${fixtureClientName}@0.0.3`]);
+  expect(published.get(fixtureClientName)!.distTags["latest"]).toBe("0.0.3");
 }, HOOK_TIMEOUT_MS);
 
 test("a production deploy key for another environment's deployment is refused before anything changes", async () => {

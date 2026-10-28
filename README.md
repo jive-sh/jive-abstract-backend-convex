@@ -5,7 +5,7 @@ Jive's reusable pipeline with no workflow code of its own. Each deploy produces 
 commit:
 
 - **The functions**, pushed to one Convex deployment per environment.
-- **The client**, published to npm under the package's own name, carrying the generated `api` and the URL of
+- **The client**, published to npm under the name set in `clientPackageName`, carrying the generated `api` and the URL of
   that environment's deployment. Callers install the client and connect without configuring a URL, and its
   version names the deploy it matches.
 
@@ -64,6 +64,7 @@ The abstract itself is an ordinary library: it builds and publishes through
     "backend-convex": {
       "team": 551884,
       "project": "example-server",
+      "clientPackageName": "@example/server-client",
       "region": "aws-us-east-1",
       "environments": {
         "latest": {
@@ -103,6 +104,7 @@ validate the manifest as you type. Every field is required, so the schema lists 
 | --- | --- |
 | `team` | Numeric id of the Convex team. The Management API takes ids, not slugs. |
 | `project` | Slug of the project; created with that name on the first deploy (with a team access token; with a deploy key it must exist). |
+| `clientPackageName` | The npm name the client is published under, such as `@example/server-client`. Its version check, its `provisionWithJive` call and its publish all use this name. |
 | `region` | Region for deployments the abstract creates. An existing deployment never moves. |
 | `environments` | One entry per environment, no more and no fewer; checked when the manifest is read. |
 | `environments.*.environmentVariables` | `{ "value": "…" }` is written on every deploy. `{ "generateOnce": … }` is generated only when the deployment provably lacks it (below). Variables not declared here are left alone and listed by name in the log. |
@@ -190,16 +192,16 @@ not answer. A domain removed from the manifest is reported, not deleted.
 
 ### The published client
 
-Published under the package's name, with the version and dist-tag `jive-abstract-library` uses: environment
+Published under `clientPackageName`, with the version and dist-tag `jive-abstract-library` uses: environment
 `latest` publishes the bare version under `latest`; any other environment `<version>-<environment>` under
 `<environment>`; Preview `<version>-preview-<sha>` under `preview-<sha>`. Name the production environment
-`latest` so `npm install @example/server` resolves to it. A deploy whose version is already on the registry, such as
+`latest` so `npm install @example/server-client` resolves to it. A deploy whose version is already on the registry, such as
 a push without a version bump, still deploys the functions but leaves the published client alone, so bump `version`
 whenever callers need a new client (a changed `api`, or new URLs).
 
 ```ts
 import { ConvexClient } from "convex/browser";
-import { api, convexUrl } from "@example/server";
+import { api, convexUrl } from "@example/server-client";
 
 const client = new ConvexClient(convexUrl);
 const latest = await client.query(api.deploys.latest, {});
@@ -233,8 +235,9 @@ client API URL), `convexSiteUrl`, and `deployment` (`environment`, `sourceCommit
 ## Developing this abstract
 
 `bun run jive:cicd:build` builds and installs the CLI locally; `bun run jive:cicd:audit` typechecks and runs
-the tests, including `test/e2e.test.ts`, which runs every hook of the built CLI against `test/fixture` on a
-throwaway Convex project (deleted afterwards) and publishes the fixture's client to a registry the test serves
+the unit tests in `src`, which reach Convex and npm only through fakes. CI runs nothing else, because this repo is
+a library and its pipeline holds no Convex credential. `bun run test:e2e`, run by hand only, runs every hook of the
+built CLI against `test/fixture` on a throwaway Convex project in the fixture's real team (deleted afterwards) and publishes the fixture's client to a registry the test serves
 itself. It needs `CONVEX_TEAM_ACCESS_TOKEN` for the fixture's team. After the team-token hooks it covers the deploy-key
 path live: it creates a production deployment with reference `latest` in the throwaway project, mints a production
 deploy key for it with only the actions listed above, and runs `deploy-plan` and `deploy` with only

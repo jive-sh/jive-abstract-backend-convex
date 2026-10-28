@@ -73,6 +73,7 @@ const packageJson = Schema.decodeUnknownSync(PackageJsonSchema)({
     "backend-convex": {
       team: 1,
       project: "example",
+      clientPackageName: "@example/server-client",
       region: "aws-us-east-1",
       environments: { latest: { environmentVariables: {}, customDomains: [] } },
       afterDeploy: null,
@@ -94,9 +95,9 @@ test("a refusal from Jive stops the client publish before anything is packed or 
     Effect.provide(pipe(ClientPackageImpl.Layer, Layer.provideMerge(BunFileSystem.layer))),
   ));
   expect(Exit.isFailure(exit)).toBe(true);
-  expect(JSON.stringify(exit)).toContain("Jive refused to provision the npm package @example/server, so nothing was published: the test's Jive server refuses");
+  expect(JSON.stringify(exit)).toContain("Jive refused to provision the npm package @example/server-client, so nothing was published: the test's Jive server refuses");
 
   const provision = requests.find((request) => request.path === "/api/action");
-  expect(JSON.parse(provision!.body)).toMatchObject({ path: "packages:provision", args: { registry: "npm", packageName: "@example/server" } });
+  expect(JSON.parse(provision!.body)).toMatchObject({ path: "packages:provision", args: { registry: "npm", packageName: "@example/server-client" } });
   expect(requests.filter((request) => request.method === "PUT")).toEqual([]);
 }, 120_000);

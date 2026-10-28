@@ -132,6 +132,11 @@ export const BackendConvexSchema = Schema.Struct({
   environments: Schema.Record(Schema.String, EnvironmentConfig).annotate({
     description: 'One entry per deploy target: every environment named in jive.cicd.deploy.branches, plus "Preview" when jive.cicd.deploy.previews is true, and nothing else. Each environment is its own Convex deployment, referenced by the environment name in lowercase.',
   }),
+  clientPackageName: Schema.NonEmptyString.check(
+    Schema.isPattern(/^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/),
+  ).annotate({
+    description: 'npm name the generated client is published under, e.g. "@example/server-client". Callers install it to get the typed `api` and the deployment URL.',
+  }),
   afterDeploy: Schema.NullOr(Schema.Struct({
     function: Schema.NonEmptyString.annotate({
       description: 'A Convex function, e.g. "deploys:record", run after every push with {"sourceCommitSha": string, "environment": string}. May be internal.',

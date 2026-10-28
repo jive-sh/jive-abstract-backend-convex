@@ -22,6 +22,7 @@ function manifest(overrides: { branches?: Record<string, string[]>; previews?: b
       "backend-convex": {
         team: 1,
         project: "example",
+        clientPackageName: "@example/server-client",
         region: "aws-us-east-1",
         environments: overrides.environments ?? { latest: { environmentVariables: {}, customDomains: [] } },
         afterDeploy: null,
@@ -96,4 +97,14 @@ test("provisionWithJive is required: null publishes the client as before, { serv
   const without = manifest();
   delete (without.jive["backend-convex"] as Record<string, unknown>)["provisionWithJive"];
   expect(() => decode(without)).toThrow(/provisionWithJive/);
+});
+
+test("clientPackageName is required and must be an npm package name", () => {
+  expect(decode(manifest()).jive["backend-convex"].clientPackageName).toBe("@example/server-client");
+  const without = manifest();
+  delete (without.jive["backend-convex"] as Record<string, unknown>)["clientPackageName"];
+  expect(() => decode(without)).toThrow(/clientPackageName/);
+  const invalid = manifest();
+  (invalid.jive["backend-convex"] as Record<string, unknown>)["clientPackageName"] = "Not A Name";
+  expect(() => decode(invalid)).toThrow(/clientPackageName/);
 });

@@ -36,6 +36,7 @@
     "backend-convex": {
       "team": 551884,
       "project": "jive-abstract-backend-convex-e2e",
+      "clientPackageName": "jive-abstract-backend-convex-fixture-client",
       "region": "aws-us-east-1",
       "environments": {
         "Staging": {

@@ -51,6 +51,7 @@ function packageJson(input: { previews?: boolean } = {}): PackageJson {
       "backend-convex": {
         team: 551884,
         project: "jive-server",
+        clientPackageName: "@jive-sh/server-client",
         region: "aws-us-east-1",
         environments: input.previews === true ? { latest: environment, Preview: environment } : { latest: environment },
         afterDeploy: { function: "deploys:record" },

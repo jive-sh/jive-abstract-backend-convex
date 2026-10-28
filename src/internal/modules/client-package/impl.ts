@@ -79,7 +79,7 @@ export class ClientPackageImpl extends implementing(backendModules.ClientPackage
   }): EffectGen<DeployPlan, string> {
     const { packageJson, environment, context } = input;
     return yield* planNpmRelease({
-      name: packageJson.name,
+      name: packageJson.jive[BACKEND_CONVEX_KEY].clientPackageName,
       version: releaseVersion(packageJson.version, environment, context.sourceCommitSha),
       registry: registryOf(packageJson),
     });
@@ -115,7 +115,7 @@ export class ClientPackageImpl extends implementing(backendModules.ClientPackage
     yield* write(resolve(packageDir, "index.js"), indexJs(urls, { environment, sourceCommitSha: context.sourceCommitSha, version }));
     yield* write(resolve(packageDir, "index.d.ts"), INDEX_D_TS);
     yield* write(resolve(packageDir, "package.json"), `${JSON.stringify({
-      name: packageJson.name,
+      name: packageJson.jive[BACKEND_CONVEX_KEY].clientPackageName,
       version,
       license: packageJson.license,
       ...Option.match(packageJson.description, { onNone: () => ({}), onSome: (description) => ({ description }) }),
@@ -127,7 +127,7 @@ export class ClientPackageImpl extends implementing(backendModules.ClientPackage
       ...Option.match(packageJson.publishConfig, { onNone: () => ({}), onSome: (publishConfig) => ({ publishConfig }) }),
     }, null, 2)}\n`);
 
-    yield* Effect.log(`Publishing the client ${packageJson.name}@${version} under "${distTag}" (Convex URL ${urls.convexCloud})`);
+    yield* Effect.log(`Publishing the client ${packageJson.jive[BACKEND_CONVEX_KEY].clientPackageName}@${version} under "${distTag}" (Convex URL ${urls.convexCloud})`);
     yield* ensureNpm();
     yield* publishPackage({
       packageDir,
